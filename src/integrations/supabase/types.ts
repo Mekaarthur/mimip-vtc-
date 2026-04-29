@@ -3,7 +3,8 @@ export type DriverStatus = 'offline' | 'available' | 'busy'
 export type RideStatus = 'pending' | 'accepted' | 'arriving' | 'ongoing' | 'completed' | 'cancelled'
 export type PaymentMethod = 'cash' | 'mtn_momo' | 'orange_money' | 'wallet'
 export type PaymentStatus = 'pending' | 'success' | 'failed' | 'refunded'
-export type VehicleType = 'standard' | 'comfort' | 'van' | 'moto'
+export type VehicleType = 'clando' | 'depot' | 'standard' | 'comfort' | 'van' | 'moto'
+export type Season = 'basse' | 'moyenne' | 'haute'
 export type TransactionType = 'ride' | 'topup' | 'withdrawal' | 'commission' | 'refund' | 'split'
 export type VerificationStatus = 'pending' | 'approved' | 'rejected'
 export type MomoOperator = 'mtn_momo' | 'orange_money'
@@ -47,7 +48,32 @@ export interface Pricing {
   price_per_min: number
   min_fare: number
   surge_multiplier: number
+  season: Season
+  peak_multiplier: number
+  night_multiplier: number
   is_active: boolean
+  created_at: string
+}
+
+export interface Season_Record {
+  id: string
+  name: string
+  level: Season
+  start_date: string
+  end_date: string
+  multiplier: number
+  description: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface DriverCommissionTier {
+  id: string
+  label: string
+  min_days: number
+  max_days: number | null
+  commission_rate: number
+  description: string | null
   created_at: string
 }
 
@@ -262,6 +288,16 @@ export const CAMEROON_LANDMARKS = {
     { name: 'Bonabéri', lat: 4.0800, lng: 9.6500 },
   ],
 } as const
+
+// Descriptions véhicules pour le marché camerounais
+export const VEHICLE_DESCRIPTIONS: Record<VehicleType, { label: string; desc: string; shared: boolean }> = {
+  clando:   { label: 'Clando partagé', desc: '300 XAF/pers — trajet partagé', shared: true },
+  depot:    { label: 'Dépôt',          desc: 'Seul dans le véhicule, courte distance', shared: false },
+  standard: { label: 'Standard',       desc: 'Course privée — berline', shared: false },
+  comfort:  { label: 'Confort',        desc: 'Course privée — véhicule premium', shared: false },
+  van:      { label: 'Van / Minibus',  desc: 'Groupes jusqu\'à 8 personnes', shared: false },
+  moto:     { label: 'Moto-taxi',      desc: 'Rapide pour courtes distances', shared: false },
+}
 
 // Formatage prix XAF
 export const formatXAF = (amount: number): string => {
