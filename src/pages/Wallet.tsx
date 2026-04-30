@@ -1,80 +1,56 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, TrendingUp, TrendingDown, Plus, Minus, Smartphone, RefreshCw } from 'lucide-react'
+import { ArrowLeft, TrendingUp, TrendingDown, Plus, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useToast } from '@/hooks/use-toast'
+import { PaymentModal } from '@/components/PaymentModal'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/integrations/supabase/client'
-import { Wallet as WalletType, WalletTransaction, MobileMoneyTransaction, formatXAF, MomoOperator } from '@/integrations/supabase/types'
+import { formatXAF } from '@/integrations/supabase/types'
+
+interface WalletData { id: string; balance: number }
+interface Transaction {
+  id: string; type: string; amount: number; balance_after: number
+  description: string | null; status: string; created_at: string
+}
+
+const TOPUP_AMOUNTS = [1000, 2000, 5000, 10000, 20000, 50000]
 
 export default function Wallet() {
   const navigate = useNavigate()
-  const { toast } = useToast()
   const { user } = useAuth()
-
-  const [wallet, setWallet] = useState<WalletType | null>(null)
-  const [transactions, setTransactions] = useState<WalletTransaction[]>([])
+  const [wallet, setWallet] = useState<WalletData | null>(null)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
   const [showTopup, setShowTopup] = useState(false)
-  const [operator, setOperator] = useState<MomoOperator>('mtn_momo')
-  const [momoPhone, setMomoPhone] = useState('')
-  const [amount, setAmount] = useState('')
-  const [processing, setProcessing] = useState(false)
+  const [topupAmount, setTopupAmount] = useState(5000)
+  const [customAmount, setCustomAmount] = useState('')
 
-  useEffect(() => {
+  useEffect(() => { fetchWallet() }, [user])
+
+  async function fetchWallet() {
     if (!user) return
-    const load = async () => {
-      const [{ data: w }, { data: tx }] = await Promise.all([
-        supabase.from('wallets').select('*').eq('user_id', user.id).single(),
-        supabase.from('wallet_transactions')
-          .select('*')
-          .eq('wallet_id', (await supabase.from('wallets').select('id').eq('user_id', user.id).single()).data?.id)
-          .order('created_at', { ascending: false })
-          .limit(20),
-      ])
+    setLoading(true)
+    const { data: w } = await supabase
+      .from('wallets').select('id, balance').eq('user_id', user.id).single()
+    if (w) {
       setWallet(w)
-      setTransactions(tx ?? [])
-      setLoading(false)
+      const { data: txs } = await supabase
+        .from('wallet_transactions')
+        .select('*')
+        .eq('wallet_id', w.id)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      setTransactions(txs ?? [])
     }
-    load()
-  }, [user])
-
-  const handleTopup = async () => {
-    if (!momoPhone || !amount || !wallet) return
-    const amountNum = parseInt(amount)
-    if (isNaN(amountNum) || amountNum < 500) {
-      toast({ title: 'Montant invalide', description: 'Minimum 500 XAF', variant: 'destructive' })
-      return
-    }
-    setProcessing(true)
-    const { error } = await supabase.from('mobile_money_transactions').insert({
-      user_id: user!.id,
-      wallet_id: wallet.id,
-      operator,
-      phone: `+237${momoPhone}`,
-      amount: amountNum,
-      type: 'topup',
-    })
-    setProcessing(false)
-    if (error) {
-      toast({ title: 'Erreur', description: error.message, variant: 'destructive' })
-    } else {
-      toast({
-        title: 'Demande envoyée !',
-        description: `Confirmez le paiement de ${formatXAF(amountNum)} sur votre ${operator === 'mtn_momo' ? 'MTN MoMo' : 'Orange Money'}.`,
-      })
-      setShowTopup(false)
-      setAmount('')
-      setMomoPhone('')
-    }
+    setLoading(false)
   }
 
-  const QUICK_AMOUNTS = [1000, 2000, 5000, 10000, 20000, 50000]
+  const effectiveAmount = customAmount ? parseInt(customAmount) || 0 : topupAmount
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-screen">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
+      <RefreshCw className="w-8 h-8 text-yellow-400 animate-spin" />
     </div>
   )
 
@@ -90,104 +66,19 @@ export default function Wallet() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
-        {/* CARTE SOLDE */}
-        <div className="bg-gradient-to-br from-green-500 to-teal-600 rounded-3xl p-6 text-white shadow-lg">
-          <p className="text-green-100 text-sm mb-1">Solde disponible</p>
-          <p className="text-4xl font-bold mb-6">{wallet ? formatXAF(wallet.balance) : '...'}</p>
-          <div className="flex gap-3">
-            <Button
-              onClick={() => setShowTopup(true)}
-              className="flex-1 bg-white/20 hover:bg-white/30 text-white border-0 rounded-xl"
-            >
-              <Plus className="w-4 h-4 mr-1" /> Recharger
-            </Button>
-            <Button
-              variant="outline"
-              className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/30 rounded-xl"
-            >
-              <Minus className="w-4 h-4 mr-1" /> Retirer
-            </Button>
-          </div>
+        {/* Carte solde */}
+        <div className="bg-gradient-to-br from-yellow-400 to-yellow-500 rounded-3xl p-6 text-yellow-900 shadow-lg">
+          <p className="text-yellow-800 text-sm mb-1">Solde disponible</p>
+          <p className="text-4xl font-black mb-6">{formatXAF(wallet?.balance ?? 0)}</p>
+          <Button
+            onClick={() => setShowTopup(true)}
+            className="w-full bg-yellow-900 hover:bg-yellow-800 text-white rounded-xl h-12 font-bold"
+          >
+            <Plus className="w-4 h-4 mr-2" /> Recharger
+          </Button>
         </div>
 
-        {/* RECHARGE MOMO */}
-        {showTopup && (
-          <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
-            <h2 className="font-semibold text-gray-900">Recharger via Mobile Money</h2>
-
-            {/* OPÉRATEUR */}
-            <div className="grid grid-cols-2 gap-3">
-              {(['mtn_momo', 'orange_money'] as MomoOperator[]).map(op => (
-                <button
-                  key={op}
-                  onClick={() => setOperator(op)}
-                  className={`p-4 rounded-xl border-2 transition-all text-center ${
-                    operator === op ? 'border-orange-400 bg-orange-50' : 'border-gray-100'
-                  }`}
-                >
-                  <Smartphone className={`w-6 h-6 mx-auto mb-1 ${
-                    op === 'mtn_momo' ? 'text-yellow-500' : 'text-orange-500'
-                  }`} />
-                  <span className="text-sm font-medium">{op === 'mtn_momo' ? 'MTN MoMo' : 'Orange Money'}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* TÉLÉPHONE */}
-            <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-4 h-12 focus-within:border-orange-400">
-              <span className="text-gray-500 font-medium text-sm">🇨🇲 +237</span>
-              <div className="w-px h-6 bg-gray-200" />
-              <input
-                type="tel"
-                className="flex-1 outline-none text-gray-900 placeholder-gray-400 text-sm"
-                placeholder="6XX XXX XXX"
-                value={momoPhone}
-                onChange={e => setMomoPhone(e.target.value.replace(/\D/g, ''))}
-                maxLength={9}
-              />
-            </div>
-
-            {/* MONTANTS RAPIDES */}
-            <div>
-              <p className="text-sm text-gray-500 mb-2">Montant (XAF)</p>
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {QUICK_AMOUNTS.map(a => (
-                  <button
-                    key={a}
-                    onClick={() => setAmount(String(a))}
-                    className={`py-2 rounded-lg text-sm font-medium border transition-all ${
-                      amount === String(a) ? 'border-orange-400 bg-orange-50 text-orange-600' : 'border-gray-100 text-gray-600 hover:border-gray-200'
-                    }`}
-                  >
-                    {formatXAF(a)}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="number"
-                className="w-full border border-gray-200 rounded-xl px-4 h-12 outline-none focus:border-orange-400 text-gray-900"
-                placeholder="Ou entrez un montant"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-              />
-            </div>
-
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setShowTopup(false)} className="flex-1 rounded-xl h-12">
-                Annuler
-              </Button>
-              <Button
-                onClick={handleTopup}
-                disabled={processing || !momoPhone || !amount}
-                className="flex-1 bg-orange-500 hover:bg-orange-600 rounded-xl h-12"
-              >
-                {processing ? <RefreshCw className="w-4 h-4 animate-spin" /> : `Recharger ${amount ? formatXAF(parseInt(amount) || 0) : ''}`}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* HISTORIQUE */}
+        {/* Historique */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="font-semibold text-gray-900 mb-4">Transactions récentes</h2>
           {transactions.length === 0 ? (
@@ -207,15 +98,26 @@ export default function Wallet() {
                     }
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900 capitalize">{tx.description ?? tx.type}</p>
-                    <p className="text-xs text-gray-400">{new Date(tx.created_at).toLocaleDateString('fr-CM')}</p>
+                    <p className="text-sm font-medium text-gray-900 capitalize">
+                      {tx.description ?? tx.type}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {new Date(tx.created_at).toLocaleDateString('fr-FR', {
+                        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </p>
                   </div>
                   <div className="text-right">
                     <p className={`font-semibold ${tx.amount > 0 ? 'text-green-500' : 'text-red-500'}`}>
-                      {tx.amount > 0 ? '+' : ''}{formatXAF(tx.amount)}
+                      {tx.amount > 0 ? '+' : ''}{formatXAF(Math.abs(tx.amount))}
                     </p>
-                    <Badge variant="outline" className="text-xs">
-                      {tx.status === 'success' ? '✓' : tx.status === 'pending' ? '⏳' : '✗'}
+                    <Badge variant="outline" className={`text-xs ${
+                      tx.status === 'success' ? 'border-green-300 text-green-600' :
+                      tx.status === 'pending' ? 'border-yellow-300 text-yellow-600' :
+                      'border-red-300 text-red-600'
+                    }`}>
+                      {tx.status === 'success' ? 'Confirmé' :
+                       tx.status === 'pending' ? 'En attente' : 'Échoué'}
                     </Badge>
                   </div>
                 </div>
@@ -224,6 +126,64 @@ export default function Wallet() {
           )}
         </div>
       </div>
+
+      {/* Modal recharge */}
+      {showTopup && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
+          <div className="bg-white w-full rounded-t-3xl p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="font-bold text-xl text-gray-900 mb-4">Recharger le portefeuille</h3>
+
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {TOPUP_AMOUNTS.map(amt => (
+                <button
+                  key={amt}
+                  onClick={() => { setTopupAmount(amt); setCustomAmount('') }}
+                  className={`py-2 rounded-xl text-sm font-semibold border-2 transition-all
+                    ${topupAmount === amt && !customAmount
+                      ? 'border-yellow-400 bg-yellow-50 text-yellow-900'
+                      : 'border-gray-200 text-gray-700 hover:border-gray-300'}`}
+                >
+                  {formatXAF(amt)}
+                </button>
+              ))}
+            </div>
+
+            <div className="mb-4">
+              <label className="text-sm text-gray-600 block mb-1">Autre montant</label>
+              <div className="flex items-center gap-2 border rounded-xl px-4 py-3 focus-within:border-yellow-400">
+                <input
+                  type="number"
+                  placeholder="Ex : 15000"
+                  value={customAmount}
+                  onChange={e => setCustomAmount(e.target.value)}
+                  className="flex-1 outline-none text-sm"
+                  min={500}
+                  step={500}
+                />
+                <span className="text-gray-500 text-sm">XAF</span>
+              </div>
+              {customAmount && effectiveAmount < 500 && (
+                <p className="text-red-500 text-xs mt-1">Minimum 500 XAF</p>
+              )}
+            </div>
+
+            {effectiveAmount >= 500 ? (
+              <PaymentModal
+                amount={effectiveAmount}
+                walletBalance={wallet?.balance ?? 0}
+                walletId={wallet?.id}
+                type="topup"
+                onSuccess={() => { setShowTopup(false); fetchWallet() }}
+                onCancel={() => setShowTopup(false)}
+              />
+            ) : (
+              <Button disabled className="w-full h-12 bg-gray-200 text-gray-500">
+                Saisissez un montant (min. 500 XAF)
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

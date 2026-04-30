@@ -41,8 +41,8 @@ create table if not exists driver_subscriptions (
   driver_id uuid references drivers on delete cascade not null,
   month integer not null check (month between 1 and 12),
   year integer not null,
-  amount integer not null default 10000,          -- 10 000 XAF/mois
-  commission_rate numeric(4,2) not null default 8.0, -- 8%
+  amount integer not null default 10000,
+  commission_rate numeric(4,2) not null default 8.0,
   status text check (status in ('pending','paid','overdue')) default 'pending',
   paid_at timestamptz,
   payment_method text check (payment_method in ('mtn_momo','orange_money','wallet')),
@@ -60,7 +60,6 @@ create policy "Admin gérer abonnements"
 
 -- ══════════════════════════════════════════════
 -- 3. COMPTEUR MENSUEL DE COURSES PAR CHAUFFEUR
--- Se remet à zéro le 1er de chaque mois
 -- ══════════════════════════════════════════════
 create table if not exists driver_monthly_stats (
   id uuid primary key default gen_random_uuid(),
@@ -68,10 +67,10 @@ create table if not exists driver_monthly_stats (
   month integer not null check (month between 1 and 12),
   year integer not null,
   total_rides integer not null default 0,
-  total_earnings integer not null default 0,      -- XAF brut
-  total_commission integer not null default 0,    -- 8% prélevé
-  net_earnings integer not null default 0,        -- après commission
-  alert_sent boolean default false,               -- alerte J25 envoyée
+  total_earnings integer not null default 0,
+  total_commission integer not null default 0,
+  net_earnings integer not null default 0,
+  alert_sent boolean default false,
   updated_at timestamptz default now(),
   unique(driver_id, month, year)
 );
@@ -95,7 +94,6 @@ declare
   v_commission integer;
   v_net integer;
 begin
-  -- Seulement quand une course passe à "completed"
   if new.status = 'completed' and old.status != 'completed' then
     v_commission := ((new.final_price * 0.08))::integer;
     v_net        := new.final_price - v_commission;
@@ -120,7 +118,7 @@ create trigger on_ride_completed
   for each row execute function update_monthly_stats_on_ride();
 
 -- ══════════════════════════════════════════════
--- 5. NOTIFICATIONS D'ALERTE (J25 < 20 courses)
+-- 5. ALERTES CHAUFFEUR
 -- ══════════════════════════════════════════════
 create table if not exists driver_alerts (
   id uuid primary key default gen_random_uuid(),
@@ -161,7 +159,7 @@ language plpgsql stable as $$
 declare
   v_pricing       pricing%rowtype;
   v_base_price    numeric;
-  v_surge         integer := 0;   -- +500 XAF fixe si heure de pointe
+  v_surge         integer := 0;
   v_hour          integer;
   v_total_price   integer;
   v_per_person    integer;
@@ -169,7 +167,6 @@ declare
   v_driver_gets   integer;
   v_is_peak       boolean := false;
 begin
-  -- Récupérer tarif (prix unique toute l'année)
   select * into v_pricing
   from pricing
   where vehicle_type::text = p_vehicle_type
@@ -181,28 +178,22 @@ begin
     return jsonb_build_object('error', 'Tarif introuvable pour ' || p_vehicle_type || ' à ' || p_city);
   end if;
 
-  -- Prix de base : forfait + km
   v_base_price := v_pricing.base_fare + (p_distance_km * v_pricing.price_per_km);
 
-  -- Surge pricing FIXE +500 XAF (version douce)
   v_hour := extract(hour from now());
   if v_hour between 7 and 9 or v_hour between 17 and 19 then
     v_surge   := 500;
     v_is_peak := true;
   elsif v_hour >= 22 or v_hour <= 5 then
-    v_surge   := 500;   -- nuit aussi +500 XAF
+    v_surge   := 500;
     v_is_peak := true;
   end if;
 
-  -- Prix total = max(calcul, minimum garanti) + surge
   v_total_price := greatest(v_base_price::integer, v_pricing.min_fare) + v_surge;
 
-  -- Commission 8%
   v_commission  := (v_total_price * 0.08)::integer;
   v_driver_gets := v_total_price - v_commission;
 
-  -- Course partagée : diviser par nombre d'amis
-  -- Le chauffeur reçoit toujours le plein tarif
   v_per_person := case
     when p_is_shared and p_split_count > 1
     then ceil(v_total_price::numeric / p_split_count)::integer
@@ -212,28 +203,12 @@ begin
   return jsonb_build_object(
     'total_price',      v_total_price,
     'price_per_person', v_per_person,
-    'commission',       v_commission,       -- 8%
-    'driver_gets',      v_driver_gets,      -- 92%
-    'surge',            v_surge,            -- 0 ou 500 XAF
+    'commission',       v_commission,
+    'driver_gets',      v_driver_gets,
+    'surge',            v_surge,
     'is_peak_hour',     v_is_peak,
     'split_count',      p_split_count,
     'currency',         'XAF'
   );
 end;
 $$;
-
--- ══════════════════════════════════════════════
--- EXEMPLES DE RÉSULTATS
--- ══════════════════════════════════════════════
--- Heure normale :
--- select calculate_ride_price('standard', 'Yaoundé', 8, 0);
--- → total=3116, commission=249, driver_gets=2867
---
--- Heure de pointe :
--- select calculate_ride_price('standard', 'Yaoundé', 8, 0);
--- → total=3616, commission=289, driver_gets=3327, surge=500
---
--- Course partagée 3 amis, 15 km :
--- select calculate_ride_price('standard', 'Yaoundé', 15, 0, true, 3);
--- → total=5265, per_person=1755, driver_gets=4844
--- ══════════════════════════════════════════════
