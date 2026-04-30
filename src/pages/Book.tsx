@@ -3,17 +3,42 @@ import { useNavigate } from 'react-router-dom'
 import {
   MapPin, Navigation, Clock,
   ArrowLeft, Users, Car, Bike, Tag, ChevronRight,
-  UserPlus, Info
+  UserPlus, Info, Crosshair, Map
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 import { useRide } from '@/hooks/useRide'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/integrations/supabase/client'
+import { MapView } from '@/components/MapView'
 import {
   VehicleType, PaymentMethod, Pricing,
   CAMEROON_LANDMARKS, formatXAF
 } from '@/integrations/supabase/types'
+
+// Calcul distance Haversine (km) entre deux points GPS
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+// Reverse geocoding Nominatim (gratuit, OpenStreetMap)
+async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=fr`,
+      { headers: { 'User-Agent': 'MimipVTC/1.0' } }
+    )
+    const data = await res.json()
+    return data.display_name?.split(',').slice(0, 3).join(', ') ?? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+  } catch {
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+  }
+}
 
 // ─── Types de véhicules ──────────────────────────────────────
 const VEHICLES: {
@@ -118,6 +143,11 @@ export default function Book() {
 
   const [loading, setLoading] = useState(false)
 
+  // Carte interactive
+  const [mapMode, setMapMode] = useState(false)
+  const [mapPicking, setMapPicking] = useState<'pickup' | 'dropoff'>('pickup')
+  const [geocoding, setGeocoding] = useState(false)
+
   // Charger tarifs et saison
   useEffect(() => {
     supabase.from('pricing').select('*').eq('is_active', true)
@@ -126,13 +156,44 @@ export default function Book() {
       .then(({ data }) => { if (data) setCurrentSeason(data) })
   }, [])
 
+  // Géolocalisation : centrer sur position actuelle
+  function locateMe() {
+    if (!navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(pos => {
+      const { latitude: lat, longitude: lng } = pos.coords
+      setMapMode(true)
+      setMapPicking('pickup')
+      handleMapClick(lat, lng)
+    })
+  }
+
+  // Clic sur la carte
+  async function handleMapClick(lat: number, lng: number) {
+    setGeocoding(true)
+    const address = await reverseGeocode(lat, lng)
+    // Détecter la ville approximativement
+    const city = lat > 3.5 && lat < 4.2 && lng > 11.3 && lng < 11.7 ? 'Yaoundé'
+               : lat > 3.7 && lat < 4.1 && lng > 9.5 && lng < 10.1 ? 'Douala'
+               : 'Yaoundé'
+
+    if (mapPicking === 'pickup') {
+      setPickup(address)
+      setPickupCoords({ lat, lng, city })
+      setMapPicking('dropoff')
+    } else {
+      setDropoff(address)
+      setDropoffCoords({ lat, lng })
+    }
+    setGeocoding(false)
+  }
+
   // Calculer prix dès que les paramètres changent
   useEffect(() => {
     if (!pickupCoords || !dropoffCoords) return
     const city = pickupCoords.city ?? 'Yaoundé'
-    // Estimation : 8 km, 20 min (sera remplacé par calcul GPS réel)
-    const distKm = 8
-    const durMin = 20
+    // Distance réelle calculée par Haversine
+    const distKm = Math.max(1, haversineKm(pickupCoords.lat, pickupCoords.lng, dropoffCoords.lat, dropoffCoords.lng))
+    const durMin = Math.round(distKm * 2.5) // estimation 2.5 min/km en ville
     supabase.rpc('calculate_ride_price', {
       p_vehicle_type: vehicleType,
       p_city: city,
@@ -299,7 +360,90 @@ export default function Book() {
                   min={new Date().toISOString().slice(0, 16)}
                 />
               </div>
+
+              {/* BOUTONS CARTE / GPS */}
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => { setMapMode(!mapMode); setMapPicking('pickup') }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 text-sm font-medium transition-all ${
+                    mapMode ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  <Map className="w-4 h-4" />
+                  {mapMode ? 'Masquer la carte' : 'Choisir sur la carte'}
+                </button>
+                <button
+                  onClick={locateMe}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-gray-200 text-sm font-medium text-gray-600 hover:border-orange-300 hover:text-orange-600 transition-all"
+                >
+                  <Crosshair className="w-4 h-4" />
+                  Ma position
+                </button>
+              </div>
             </div>
+
+            {/* CARTE INTERACTIVE */}
+            {mapMode && (
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div className={`px-4 py-3 flex items-center gap-3 ${
+                  mapPicking === 'pickup' ? 'bg-orange-50' : 'bg-green-50'
+                }`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${
+                    mapPicking === 'pickup' ? 'bg-orange-500' : 'bg-green-500'
+                  }`}>
+                    {mapPicking === 'pickup' ? '1' : '2'}
+                  </div>
+                  <div>
+                    <p className={`text-sm font-semibold ${mapPicking === 'pickup' ? 'text-orange-700' : 'text-green-700'}`}>
+                      {mapPicking === 'pickup' ? 'Cliquez pour placer votre départ' : 'Cliquez pour placer votre destination'}
+                    </p>
+                    {geocoding && <p className="text-xs text-gray-400">Récupération de l'adresse...</p>}
+                  </div>
+                  {pickupCoords && dropoffCoords && (
+                    <button
+                      onClick={() => { setMapPicking('pickup'); setPickupCoords(null); setPickup('') }}
+                      className="ml-auto text-xs text-gray-400 hover:text-gray-600 underline"
+                    >
+                      Recommencer
+                    </button>
+                  )}
+                </div>
+
+                <MapView
+                  height="320px"
+                  pickup={pickupCoords ? { lat: pickupCoords.lat, lng: pickupCoords.lng, label: pickup } : null}
+                  dropoff={dropoffCoords ? { lat: dropoffCoords.lat, lng: dropoffCoords.lng, label: dropoff } : null}
+                  onMapClick={handleMapClick}
+                  className="rounded-none"
+                />
+
+                {(pickupCoords || dropoffCoords) && (
+                  <div className="px-4 py-3 space-y-2 border-t border-gray-100">
+                    {pickupCoords && (
+                      <div className="flex items-start gap-2 text-sm">
+                        <div className="w-3 h-3 rounded-full bg-orange-500 shrink-0 mt-1" />
+                        <p className="text-gray-700 flex-1 truncate">{pickup}</p>
+                        <button onClick={() => { setPickupCoords(null); setPickup(''); setMapPicking('pickup') }}
+                          className="text-gray-400 hover:text-red-400 text-xs shrink-0">✕</button>
+                      </div>
+                    )}
+                    {dropoffCoords && (
+                      <div className="flex items-start gap-2 text-sm">
+                        <Navigation className="w-3 h-3 text-green-500 shrink-0 mt-1" />
+                        <p className="text-gray-700 flex-1 truncate">{dropoff}</p>
+                        <button onClick={() => { setDropoffCoords(null); setDropoff(''); setMapPicking('dropoff') }}
+                          className="text-gray-400 hover:text-red-400 text-xs shrink-0">✕</button>
+                      </div>
+                    )}
+                    {pickupCoords && dropoffCoords && (
+                      <p className="text-xs text-gray-400 text-center pt-1">
+                        Distance : ~{haversineKm(pickupCoords.lat, pickupCoords.lng, dropoffCoords.lat, dropoffCoords.lng).toFixed(1)} km
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* PARTAGE ENTRE AMIS */}
             <div className="bg-white rounded-2xl shadow-sm p-5">
@@ -488,6 +632,18 @@ export default function Book() {
         ════════════════════════════════════ */}
         {step === 'confirm' && priceResult && (
           <>
+            {/* CARTE RÉCAP */}
+            {pickupCoords && dropoffCoords && (
+              <div className="rounded-2xl overflow-hidden shadow-sm">
+                <MapView
+                  height="200px"
+                  pickup={{ lat: pickupCoords.lat, lng: pickupCoords.lng, label: pickup }}
+                  dropoff={{ lat: dropoffCoords.lat, lng: dropoffCoords.lng, label: dropoff }}
+                  className="rounded-none"
+                />
+              </div>
+            )}
+
             <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
               <h2 className="font-semibold text-gray-900">Récapitulatif</h2>
 
