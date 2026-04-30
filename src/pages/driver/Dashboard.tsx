@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/hooks/useAuth'
 import { useDriverRides } from '@/hooks/useRide'
+import { useShareLocation } from '@/hooks/useDriverLocation'
 import { supabase } from '@/integrations/supabase/client'
 import { Driver, Ride, DriverStatus, formatXAF } from '@/integrations/supabase/types'
 
@@ -187,6 +188,7 @@ export default function DriverDashboard() {
   )
 
   const isOnline = driver?.status !== 'offline'
+  const { error: gpsError } = useShareLocation(driver?.id ?? null, isOnline)
   const monthNames = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc']
 
   return (
@@ -223,6 +225,14 @@ export default function DriverDashboard() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+
+        {/* ALERTE GPS */}
+        {gpsError && isOnline && (
+          <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3">
+            <MapPin className="w-5 h-5 text-orange-500 shrink-0" />
+            <p className="text-sm text-orange-700">{gpsError}</p>
+          </div>
+        )}
 
         {/* ══ ALERTES IMPORTANTES ══ */}
         {alerts.map(alert => (

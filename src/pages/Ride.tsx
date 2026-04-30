@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { useRide } from '@/hooks/useRide'
 import { useAuth } from '@/hooks/useAuth'
+import { useDriverLocation } from '@/hooks/useDriverLocation'
+import { MapView } from '@/components/MapView'
 import { RideStatus, formatXAF } from '@/integrations/supabase/types'
 
 const STATUS_STEPS: { status: RideStatus; label: string; icon: typeof Clock }[] = [
@@ -46,6 +48,7 @@ export default function RidePage() {
   const currentStepIndex = STATUS_STEPS.findIndex(s => s.status === ride.status)
   const driver = ride.drivers
   const driverProfile = driver?.profiles
+  const driverPosition = useDriverLocation(driver?.id ?? null)
 
   const handleCancel = async () => {
     setCancelling(true)
@@ -83,18 +86,17 @@ export default function RidePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* MAP PLACEHOLDER */}
-      <div className="h-64 bg-gradient-to-br from-green-100 to-teal-100 relative">
-        <div className="absolute inset-0 opacity-20" style={{
-          backgroundImage: 'repeating-linear-gradient(0deg, #ccc 0, #ccc 1px, transparent 1px, transparent 30px), repeating-linear-gradient(90deg, #ccc 0, #ccc 1px, transparent 1px, transparent 30px)'
-        }} />
-        <div className="absolute top-4 left-4">
-          <Badge className="bg-white text-gray-700 shadow">
-            {ride.pickup_address} → {ride.dropoff_address}
-          </Badge>
-        </div>
+      {/* CARTE TEMPS RÉEL */}
+      <div className="relative h-72">
+        <MapView
+          height="288px"
+          driverPosition={driverPosition ?? undefined}
+          pickup={ride.pickup_lat ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_address } : null}
+          dropoff={ride.dropoff_lat ? { lat: ride.dropoff_lat, lng: ride.dropoff_lng, label: ride.dropoff_address } : null}
+          className="rounded-none"
+        />
         {/* Boutons flottants */}
-        <div className="absolute top-4 right-4 flex flex-col gap-2">
+        <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
           <button onClick={handleShare} className="w-10 h-10 bg-white rounded-full shadow flex items-center justify-center hover:bg-gray-50">
             <Share2 className="w-4 h-4 text-gray-600" />
           </button>
@@ -103,9 +105,9 @@ export default function RidePage() {
           </button>
         </div>
         {/* Indicateur live */}
-        <div className="absolute bottom-4 left-4 flex items-center gap-2 bg-white rounded-full px-3 py-1.5 shadow text-xs font-medium text-gray-700">
+        <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 bg-white rounded-full px-3 py-1.5 shadow text-xs font-medium text-gray-700">
           <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-          Suivi en temps réel
+          {driverPosition ? 'Chauffeur localisé' : 'Suivi en temps réel'}
         </div>
       </div>
 
